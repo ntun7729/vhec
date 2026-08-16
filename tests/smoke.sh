@@ -24,7 +24,7 @@ sudo jq -e '
 
 sudo jq -e '
   .dns.servers[0] == "fakedns" and
-  .fakedns[0].ipPool == "198.18.0.0/15" and
+  .fakeDns[0].ipPool == "198.18.0.0/15" and
   .inbounds[0].sniffing.destOverride[0] == "fakedns" and
   .inbounds[0].sniffing.routeOnly == false and
   .outbounds[0].streamSettings.network == "xhttp" and
