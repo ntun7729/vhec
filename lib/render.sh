@@ -32,7 +32,7 @@ set_env_key() {
 make_egress_json() {
   case "$OUTBOUND_TYPE" in
     direct)
-      jq -cn '{tag:"egress",protocol:"freedom",settings:{},targetStrategy:"UseIP"}'
+      jq -cn '{tag:"egress",protocol:"freedom",settings:{targetStrategy:"UseIP"}}'
       ;;
     socks|http)
       [ -n "$OUTBOUND_HOST" ] || die "OUTBOUND_HOST is required for $OUTBOUND_TYPE"
@@ -89,12 +89,12 @@ render_server() {
           security:"none",
           xhttpSettings:{path:$path,mode:$mode}
         },
-        sniffing:{enabled:true,destOverride:["http","tls","quic"],routeOnly:true}
+        sniffing:{enabled:true,destOverride:["http","tls","quic"],routeOnly:false}
       }],
       outbounds:[
         $egress,
         {tag:"dns-out",protocol:"dns",settings:{}},
-        {tag:"direct",protocol:"freedom",settings:{},targetStrategy:"UseIP"},
+        {tag:"direct",protocol:"freedom",settings:{targetStrategy:"UseIP"}},
         {tag:"block",protocol:"blackhole",settings:{}}
       ],
       routing:{domainStrategy:"AsIs",rules:$rules}
@@ -115,7 +115,7 @@ client_endpoint() {
 
 render_client() {
   load_env
-  local host cport sec mode tmp uri_host uri_path uri_enc
+  local host cport sec mode tmp uri_host uri_path uri_enc uri_sni
   host="$(client_endpoint)"
   if [ "$CF_TUNNEL_TOKEN_SET" = "1" ]; then
     cport=443
@@ -134,29 +134,33 @@ render_client() {
     {
       log:{loglevel:"warning"},
       dns:{servers:["fakedns","1.1.1.1"],queryStrategy:"UseIPv4"},
-      fakeDns:[{ipPool:"198.18.0.0/15",poolSize:65535}],
+      fakedns:[{ipPool:"198.18.0.0/15",poolSize:65535}],
       inbounds:[
-        {tag:"socks-in",listen:"127.0.0.1",port:10808,protocol:"socks",settings:{udp:true},sniffing:{enabled:true,destOverride:["fakedns","http","tls","quic"]}},
-        {tag:"http-in",listen:"127.0.0.1",port:10809,protocol:"http",settings:{},sniffing:{enabled:true,destOverride:["fakedns","http","tls"]}}
+        {tag:"socks-in",listen:"127.0.0.1",port:10808,protocol:"socks",settings:{udp:true},sniffing:{enabled:true,destOverride:["fakedns","http","tls","quic"],routeOnly:false}},
+        {tag:"http-in",listen:"127.0.0.1",port:10809,protocol:"http",settings:{},sniffing:{enabled:true,destOverride:["fakedns","http","tls"],routeOnly:false}}
       ],
       outbounds:[{
         tag:"proxy",
         protocol:"vless",
         settings:{vnext:[{address:$host,port:$port,users:[{id:$uuid,encryption:$enc,flow:"xtls-rprx-vision"}]}]},
-        streamSettings:({network:"xhttp",security:$sec,xhttpSettings:{path:$path,mode:$mode}}
+        streamSettings:({network:"xhttp",security:$sec,xhttpSettings:{host:$host,path:$path,mode:$mode}}
           + if $sec=="tls" then {tlsSettings:{serverName:$sni,alpn:["h2","http/1.1"]}} else {} end)
       },{tag:"direct",protocol:"freedom",settings:{}}],
       routing:{domainStrategy:"AsIs",rules:[{type:"field",ip:["198.18.0.0/15"],outboundTag:"proxy"}]}
     }' > "$tmp"
+
+  "$XRAY_BIN" run -test -config "$tmp" >/dev/null
   install -m 0600 "$tmp" "$CLIENT_CONFIG"
   rm -f "$tmp"
 
-  uri_host="$(jq -rn --arg v "$host" '$v|@uri')"
+  uri_host="$host"
+  case "$uri_host" in *:*) uri_host="[$uri_host]" ;; esac
   uri_path="$(jq -rn --arg v "$XHTTP_PATH" '$v|@uri')"
   uri_enc="$(jq -rn --arg v "$ENCRYPTION" '$v|@uri')"
+  uri_sni="$(jq -rn --arg v "$host" '$v|@uri')"
   if [ "$sec" = "tls" ]; then
     printf 'vless://%s@%s:%s?encryption=%s&flow=xtls-rprx-vision&type=xhttp&path=%s&mode=%s&security=tls&sni=%s&host=%s#vhec-xhttp\n' \
-      "$UUID" "$uri_host" "$cport" "$uri_enc" "$uri_path" "$mode" "$uri_host" "$uri_host" > "$CLIENT_LINK"
+      "$UUID" "$uri_host" "$cport" "$uri_enc" "$uri_path" "$mode" "$uri_sni" "$uri_sni" > "$CLIENT_LINK"
   else
     printf 'vless://%s@%s:%s?encryption=%s&flow=xtls-rprx-vision&type=xhttp&path=%s&mode=%s&security=none#vhec-xhttp\n' \
       "$UUID" "$uri_host" "$cport" "$uri_enc" "$uri_path" "$mode" > "$CLIENT_LINK"
