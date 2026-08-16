@@ -142,7 +142,7 @@ render_client() {
     {
       log:{loglevel:"warning"},
       dns:{servers:["fakedns","1.1.1.1"],queryStrategy:"UseIPv4"},
-      fakedns:[{ipPool:"198.18.0.0/15",poolSize:65535}],
+      fakeDns:[{ipPool:"198.18.0.0/15",poolSize:65535}],
       inbounds:[
         {tag:"socks-in",listen:"127.0.0.1",port:10808,protocol:"socks",settings:{udp:true},sniffing:{enabled:true,destOverride:["fakedns","http","tls","quic"],routeOnly:false}},
         {tag:"http-in",listen:"127.0.0.1",port:10809,protocol:"http",settings:{},sniffing:{enabled:true,destOverride:["fakedns","http","tls"],routeOnly:false}}
