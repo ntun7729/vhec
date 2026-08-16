@@ -27,7 +27,7 @@ The repository is private, so clone/download it with your authenticated GitHub a
 Direct XHTTP:
 
 ```bash
-sudo PUBLIC_HOST=203.0.113.10 ./vhec.sh install
+sudo PUBLIC_HOST=203.0.113.10 bash ./vhec.sh install
 ```
 
 With an HTTP egress proxy:
@@ -41,7 +41,7 @@ sudo \
   OUTBOUND_USER='user' \
   OUTBOUND_PASS='pass' \
   HTTP_UDP_POLICY=direct \
-  ./vhec.sh install
+  bash ./vhec.sh install
 ```
 
 With a SOCKS egress proxy:
@@ -52,7 +52,7 @@ sudo \
   OUTBOUND_TYPE=socks \
   OUTBOUND_HOST=127.0.0.1 \
   OUTBOUND_PORT=1080 \
-  ./vhec.sh install
+  bash ./vhec.sh install
 ```
 
 ### VLESS Encryption authentication
@@ -66,7 +66,7 @@ VLESSENC_AUTH=x25519
 Optional ML-KEM-768 authentication:
 
 ```bash
-sudo VLESSENC_AUTH=mlkem768 PUBLIC_HOST=203.0.113.10 ./vhec.sh install
+sudo VLESSENC_AUTH=mlkem768 PUBLIC_HOST=203.0.113.10 bash ./vhec.sh install
 ```
 
 `xray vlessenc` still uses the hybrid VLESS Encryption profile; this option selects which generated authentication pair is used.
@@ -79,7 +79,7 @@ For a remotely managed Cloudflare Tunnel:
 sudo \
   CF_TUNNEL_TOKEN='eyJ...' \
   CF_DOMAIN='proxy.example.com' \
-  ./vhec.sh install
+  bash ./vhec.sh install
 ```
 
 When `CF_TUNNEL_TOKEN` is present:
