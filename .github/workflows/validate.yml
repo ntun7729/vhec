@@ -11,8 +11,15 @@ jobs:
   xray-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Shell syntax
-        run: bash -n vhec.sh lib/render.sh lib/services.sh tests/smoke.sh
+        run: bash -n vhec.sh lib/render.sh lib/services.sh docker-entrypoint.sh tests/smoke.sh
       - name: Run integration smoke test
         run: bash tests/smoke.sh
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build container
+        run: docker build -t vhec:test .

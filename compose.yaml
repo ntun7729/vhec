@@ -1,0 +1,21 @@
+services:
+  vhec:
+    image: ghcr.io/ntun7729/vhec:latest
+    restart: unless-stopped
+    environment:
+      CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:?set CF_TUNNEL_TOKEN in .env}
+      CF_DOMAIN: ${CF_DOMAIN:?set CF_DOMAIN in .env}
+      CF_PROTOCOL: ${CF_PROTOCOL:-auto}
+      XHTTP_MODE: ${XHTTP_MODE:-auto}
+      OUTBOUND_TYPE: ${OUTBOUND_TYPE:-direct}
+      OUTBOUND_HOST: ${OUTBOUND_HOST:-}
+      OUTBOUND_PORT: ${OUTBOUND_PORT:-}
+      OUTBOUND_USER: ${OUTBOUND_USER:-}
+      OUTBOUND_PASS: ${OUTBOUND_PASS:-}
+      HTTP_UDP_POLICY: ${HTTP_UDP_POLICY:-block}
+      VLESSENC_AUTH: ${VLESSENC_AUTH:-x25519}
+    volumes:
+      - vhec-state:/etc/vhec
+
+volumes:
+  vhec-state:

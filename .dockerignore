@@ -1,0 +1,9 @@
+.git
+.github
+.env
+*.token
+*.log
+tests
+README.md
+compose.yaml
+.env.example
