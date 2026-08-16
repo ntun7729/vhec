@@ -21,6 +21,7 @@ ExecStart=$XRAY_BIN run -config $SERVER_CONFIG
 Restart=on-failure
 RestartSec=2
 LimitNOFILE=1048576
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
@@ -38,6 +39,7 @@ Type=simple
 ExecStart=$CLOUDFLARED_BIN tunnel --no-autoupdate --protocol $CF_PROTOCOL run --token-file $STATE_DIR/cloudflared.token
 Restart=on-failure
 RestartSec=3
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
@@ -51,7 +53,7 @@ write_openrc_units() {
 #!/sbin/openrc-run
 command="$XRAY_BIN"
 command_args="run -config $SERVER_CONFIG"
-command_background="no"
+command_background="yes"
 pidfile="/run/vhec-xray.pid"
 depend() { need net; }
 EOF_RC
@@ -62,7 +64,7 @@ EOF_RC
 #!/sbin/openrc-run
 command="$CLOUDFLARED_BIN"
 command_args="tunnel --no-autoupdate --protocol $CF_PROTOCOL run --token-file $STATE_DIR/cloudflared.token"
-command_background="no"
+command_background="yes"
 pidfile="/run/vhec-cloudflared.pid"
 depend() { need net; after vhec-xray; }
 EOF_RC
