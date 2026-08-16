@@ -14,6 +14,18 @@ jobs:
       - uses: actions/checkout@v6
       - name: Shell syntax
         run: bash -n install.sh vhec.sh lib/render.sh lib/services.sh docker-entrypoint.sh docker-web.sh tests/smoke.sh
+      - name: One-click installer preflight
+        run: |
+          sudo env \
+            VHEC_SOURCE_DIR="$PWD" \
+            VHEC_INSTALL_PREFLIGHT_ONLY=1 \
+            CF_TUNNEL_TOKEN=test-token \
+            CF_DOMAIN=proxy.example.com \
+            XHTTP_MODE=auto \
+            OUTBOUND_TYPE=http \
+            OUTBOUND_HOST=127.0.0.1 \
+            OUTBOUND_PORT=3128 \
+            bash ./install.sh </dev/null
       - name: Run integration smoke test
         run: bash tests/smoke.sh
 
