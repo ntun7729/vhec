@@ -9,7 +9,14 @@ cleanup() {
     sudo kill "$(cat /run/vhec/xray.pid)" 2>/dev/null || true
   fi
 }
+on_error() {
+  echo "--- vhec-xray status ---" >&2
+  sudo systemctl --no-pager --full status vhec-xray.service >&2 || true
+  echo "--- vhec-xray journal ---" >&2
+  sudo journalctl -u vhec-xray.service -n 80 --no-pager >&2 || true
+}
 trap cleanup EXIT
+trap on_error ERR
 
 sudo env PUBLIC_HOST=203.0.113.10 PORT=24443 HTTP_UDP_POLICY=block bash "$ROOT/vhec.sh" install
 
