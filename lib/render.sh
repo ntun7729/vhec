@@ -31,7 +31,7 @@ set_env_key() {
 
 validate_xray_config() {
   local file="$1" output
-  if ! output=$("$XRAY_BIN" run -test -config "$file" 2>&1); then
+  if ! output=$("$XRAY_BIN" run -test -format json -config "$file" 2>&1); then
     printf '[vhec] Xray rejected generated config %s:\n%s\n' "$file" "$output" >&2
     return 1
   fi
