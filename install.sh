@@ -24,9 +24,8 @@ else
 fi
 
 ask() {
-  local var="$1" label="$2" default="${3:-}" value
-  value="${!var}"
-  if [ -n "$value" ]; then return; fi
+  local var="$1" label="$2" default="${3:-}" current="${4:-}" value
+  if [ -n "$current" ]; then return; fi
   if [ -z "$TTY" ]; then
     printf -v "$var" '%s' "$default"
     return
@@ -41,9 +40,8 @@ ask() {
 }
 
 ask_secret() {
-  local var="$1" label="$2" value
-  value="${!var}"
-  if [ -n "$value" ]; then return; fi
+  local var="$1" label="$2" current="${3:-}" value
+  if [ -n "$current" ]; then return; fi
   if [ -z "$TTY" ]; then return; fi
   printf '%s: ' "$label" >"$TTY"
   IFS= read -r -s value <"$TTY" || true
@@ -89,11 +87,11 @@ VLESSENC_AUTH="${VLESSENC_AUTH:-x25519}"
 PORT="${PORT:-8080}"
 TLS_PORT="${TLS_PORT:-8443}"
 
-ask_secret CF_TUNNEL_TOKEN "Cloudflare Tunnel token (leave empty for no tunnel)"
+ask_secret CF_TUNNEL_TOKEN "Cloudflare Tunnel token (leave empty for no tunnel)" "$CF_TUNNEL_TOKEN"
 if [ -n "$CF_TUNNEL_TOKEN" ]; then
-  ask CF_DOMAIN "Cloudflare public hostname" "${CF_DOMAIN:-}"
+  ask CF_DOMAIN "Cloudflare public hostname" "$CF_DOMAIN" "$CF_DOMAIN"
 fi
-ask OUTBOUND_TYPE "Outbound type: direct, http, or socks" "direct"
+ask OUTBOUND_TYPE "Outbound type: direct, http, or socks" "direct" "$OUTBOUND_TYPE"
 case "$OUTBOUND_TYPE" in
   direct)
     OUTBOUND_HOST=''
@@ -102,14 +100,15 @@ case "$OUTBOUND_TYPE" in
     OUTBOUND_PASS=''
     ;;
   http|socks)
-    ask OUTBOUND_HOST "${OUTBOUND_TYPE^^} proxy host/IP" "${OUTBOUND_HOST:-}"
-    ask OUTBOUND_PORT "${OUTBOUND_TYPE^^} proxy port" "${OUTBOUND_PORT:-}"
+    proxy_label="$(printf '%s' "$OUTBOUND_TYPE" | tr '[:lower:]' '[:upper:]')"
+    ask OUTBOUND_HOST "$proxy_label proxy host/IP" "$OUTBOUND_HOST" "$OUTBOUND_HOST"
+    ask OUTBOUND_PORT "$proxy_label proxy port" "$OUTBOUND_PORT" "$OUTBOUND_PORT"
     [ -n "$OUTBOUND_HOST" ] || die "proxy host is required for $OUTBOUND_TYPE"
     [ -n "$OUTBOUND_PORT" ] || die "proxy port is required for $OUTBOUND_TYPE"
     case "$OUTBOUND_PORT" in *[!0-9]*|'') die "proxy port must be numeric" ;; esac
-    ask OUTBOUND_USER "Proxy username (optional)" "${OUTBOUND_USER:-}"
+    ask OUTBOUND_USER "Proxy username (optional)" "$OUTBOUND_USER" "$OUTBOUND_USER"
     if [ -n "$OUTBOUND_USER" ]; then
-      ask_secret OUTBOUND_PASS "Proxy password"
+      ask_secret OUTBOUND_PASS "Proxy password" "$OUTBOUND_PASS"
     fi
     ;;
   *) die "OUTBOUND_TYPE must be direct, http, or socks" ;;
@@ -122,6 +121,11 @@ case "$VLESSENC_AUTH" in x25519|X25519|mlkem768|ml-kem-768|pq) ;; *) die "invali
 case "$PORT" in *[!0-9]*|'') die "PORT must be numeric" ;; esac
 case "$TLS_PORT" in *[!0-9]*|'') die "TLS_PORT must be numeric" ;; esac
 [ "$PORT" != "$TLS_PORT" ] || die "PORT and TLS_PORT must differ"
+
+if [ "${VHEC_INSTALL_PREFLIGHT_ONLY:-0}" = "1" ]; then
+  log "preflight passed"
+  exit 0
+fi
 
 log "installing directly on this Linux host (Docker is not used)"
 export CF_TUNNEL_TOKEN CF_DOMAIN CF_PROTOCOL XHTTP_MODE
