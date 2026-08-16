@@ -11,7 +11,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sudo PUBLIC_HOST=203.0.113.10 PORT=24443 HTTP_UDP_POLICY=block bash "$ROOT/vhec.sh" install
+sudo env PUBLIC_HOST=203.0.113.10 PORT=24443 HTTP_UDP_POLICY=block bash -x "$ROOT/vhec.sh" install
 
 sudo jq -e '
   .inbounds[0].protocol == "vless" and
