@@ -21,14 +21,15 @@ RUN set -eux; \
 
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates jq openssl tini \
+ && apt-get install -y --no-install-recommends bash ca-certificates jq openssl socat tini \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=downloader /out/xray /usr/local/bin/xray
 COPY --from=downloader /out/cloudflared /usr/local/bin/cloudflared
 COPY lib/render.sh /usr/local/lib/vhec/render.sh
 COPY docker-entrypoint.sh /usr/local/bin/vhec-entrypoint
-RUN chmod 0755 /usr/local/bin/vhec-entrypoint \
+COPY docker-web.sh /usr/local/bin/vhec-web
+RUN chmod 0755 /usr/local/bin/vhec-entrypoint /usr/local/bin/vhec-web \
  && mkdir -p /etc/vhec \
  && chmod 0700 /etc/vhec
 
@@ -36,4 +37,6 @@ LABEL org.opencontainers.image.source="https://github.com/ntun7729/vhec"
 LABEL org.opencontainers.image.description="VLESS Encryption + Vision + XHTTP with optional Cloudflare Tunnel and selectable egress"
 
 VOLUME ["/etc/vhec"]
+EXPOSE 30
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD printf 'GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n' | socat - TCP:127.0.0.1:30,connect-timeout=2 2>/dev/null | tail -n 1 | grep -qx 'ok'
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/vhec-entrypoint"]

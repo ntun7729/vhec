@@ -2,6 +2,8 @@ services:
   vhec:
     image: ghcr.io/ntun7729/vhec:latest
     restart: unless-stopped
+    expose:
+      - "30"
     environment:
       CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:?set CF_TUNNEL_TOKEN in .env}
       CF_DOMAIN: ${CF_DOMAIN:?set CF_DOMAIN in .env}

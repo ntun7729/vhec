@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Shell syntax
-        run: bash -n vhec.sh lib/render.sh lib/services.sh docker-entrypoint.sh tests/smoke.sh
+        run: bash -n vhec.sh lib/render.sh lib/services.sh docker-entrypoint.sh docker-web.sh tests/smoke.sh
       - name: Run integration smoke test
         run: bash tests/smoke.sh
 
@@ -35,26 +35,37 @@ jobs:
           trap cleanup EXIT
 
           docker run -d --name vhec-test -v vhec-test-state:/etc/vhec vhec:test >/dev/null
-          for _ in $(seq 1 20); do
+          for _ in $(seq 1 30); do
             if docker exec vhec-test test -s /etc/vhec/server.json 2>/dev/null; then
-              break
+              health="$(docker exec vhec-test bash -lc "printf 'GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1" || true)"
+              [ "$health" = ok ] && break
             fi
             sleep 0.5
           done
 
           test "$(docker inspect -f '{{.State.Running}}' vhec-test)" = true
+          test "$(docker inspect -f '{{.State.Health.Status}}' vhec-test)" != unhealthy
           docker exec vhec-test test -s /etc/vhec/client-v2rayng.json
           docker exec vhec-test xray run -test -config /etc/vhec/server.json
           docker exec vhec-test xray run -test -config /etc/vhec/client-v2rayng.json
-          uuid_before="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
 
+          health="$(docker exec vhec-test bash -lc "printf 'GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1")"
+          test "$health" = ok
+          v_body="$(docker exec vhec-test bash -lc "printf 'GET /v HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1")"
+          v_file="$(docker exec vhec-test cat /etc/vhec/client-link.txt)"
+          test "$v_body" = "$v_file"
+          test -z "$(docker logs vhec-test 2>&1)"
+
+          uuid_before="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
           docker rm -f vhec-test >/dev/null
           docker run -d --name vhec-test -v vhec-test-state:/etc/vhec vhec:test >/dev/null
-          for _ in $(seq 1 20); do
+          for _ in $(seq 1 30); do
             if docker exec vhec-test test -s /etc/vhec/identity.json 2>/dev/null; then
-              break
+              health="$(docker exec vhec-test bash -lc "printf 'GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1" || true)"
+              [ "$health" = ok ] && break
             fi
             sleep 0.5
           done
           uuid_after="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
           test "$uuid_before" = "$uuid_after"
+          test -z "$(docker logs vhec-test 2>&1)"

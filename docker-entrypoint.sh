@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Container mode is intentionally silent. Xray, cloudflared, the status server,
+# and entrypoint diagnostics all inherit /dev/null for stdout/stderr.
+exec >/dev/null 2>&1
+
 STATE_DIR="${VHEC_STATE_DIR:-/etc/vhec}"
 ENV_FILE="$STATE_DIR/vhec.env"
 SERVER_CONFIG="$STATE_DIR/server.json"
@@ -10,6 +14,7 @@ IDENTITY_FILE="$STATE_DIR/identity.json"
 TOKEN_FILE="$STATE_DIR/cloudflared.token"
 XRAY_BIN="${XRAY_BIN:-/usr/local/bin/xray}"
 CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}"
+WEB_BIN="${WEB_BIN:-/usr/local/bin/vhec-web}"
 
 die() { printf '[vhec] ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[vhec] %s\n' "$*"; }
@@ -42,12 +47,10 @@ esac
 stored_auth=''
 if [ -f "$IDENTITY_FILE" ]; then
   stored_auth="$(jq -r '.vlessencAuth // empty' "$IDENTITY_FILE")"
-  if [ -z "${UUID:-}" ]; then
-    UUID="$(jq -r '.uuid // empty' "$IDENTITY_FILE")"
-  fi
-  if [ -z "${XHTTP_PATH:-}" ]; then
-    XHTTP_PATH="$(jq -r '.xhttpPath // empty' "$IDENTITY_FILE")"
-  fi
+  UUID="${UUID:-$(jq -r '.uuid // empty' "$IDENTITY_FILE") }"
+  UUID="${UUID% }"
+  XHTTP_PATH="${XHTTP_PATH:-$(jq -r '.xhttpPath // empty' "$IDENTITY_FILE") }"
+  XHTTP_PATH="${XHTTP_PATH% }"
 fi
 
 UUID="${UUID:-$($XRAY_BIN uuid | head -n1)}"
@@ -75,7 +78,6 @@ OUTBOUND_PASS="${OUTBOUND_PASS:-}"
 HTTP_UDP_POLICY="${HTTP_UDP_POLICY:-block}"
 CF_DOMAIN="${CF_DOMAIN:-}"
 CF_PROTOCOL="${CF_PROTOCOL:-auto}"
-case "$CF_PROTOCOL" in auto|quic|http2) ;; *) die "CF_PROTOCOL must be auto, quic, or http2" ;; esac
 
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
   CF_TUNNEL_TOKEN_SET=1
@@ -113,42 +115,35 @@ rm -f "$identity_tmp"
 write_env
 render_all
 
-log "Xray config: $SERVER_CONFIG"
-log "Client config: $CLIENT_CONFIG"
-log "Client link: $CLIENT_LINK"
-if [ "$CF_TUNNEL_TOKEN_SET" = 1 ]; then
-  log "Cloudflare Tunnel enabled; no PUBLIC_HOST or Docker port publishing is required"
-  if [ -z "$CF_DOMAIN" ]; then
-    log "CF_DOMAIN is unset; the tunnel can run, but generated client files use CHANGE-ME.example.com until CF_DOMAIN is set"
-  else
-    log "Cloudflare hostname: $CF_DOMAIN"
-  fi
-else
-  log "Cloudflare Tunnel disabled; PUBLIC_HOST is only needed if you want a ready-to-import direct client link"
-fi
-
-if [ "$CF_TUNNEL_TOKEN_SET" != 1 ]; then
-  exec "$XRAY_BIN" run -config "$SERVER_CONFIG"
-fi
-
 cleanup() {
   local rc=$?
+  local pid
   trap - EXIT INT TERM
-  [ -n "${xray_pid:-}" ] && kill "$xray_pid" 2>/dev/null || true
-  [ -n "${cf_pid:-}" ] && kill "$cf_pid" 2>/dev/null || true
-  [ -n "${xray_pid:-}" ] && wait "$xray_pid" 2>/dev/null || true
-  [ -n "${cf_pid:-}" ] && wait "$cf_pid" 2>/dev/null || true
+  for pid in "${web_pid:-}" "${xray_pid:-}" "${cf_pid:-}"; do
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  done
+  for pid in "${web_pid:-}" "${xray_pid:-}" "${cf_pid:-}"; do
+    [ -n "$pid" ] && wait "$pid" 2>/dev/null || true
+  done
   exit "$rc"
 }
 trap cleanup EXIT INT TERM
 
+socat TCP-LISTEN:30,bind=0.0.0.0,reuseaddr,fork EXEC:"$WEB_BIN" &
+web_pid=$!
+
 "$XRAY_BIN" run -config "$SERVER_CONFIG" &
 xray_pid=$!
-"$CLOUDFLARED_BIN" tunnel --no-autoupdate --protocol "$CF_PROTOCOL" run --token-file "$TOKEN_FILE" &
-cf_pid=$!
+
+pids=("$web_pid" "$xray_pid")
+if [ "$CF_TUNNEL_TOKEN_SET" = 1 ]; then
+  "$CLOUDFLARED_BIN" tunnel --no-autoupdate --protocol "$CF_PROTOCOL" run --token-file "$TOKEN_FILE" &
+  cf_pid=$!
+  pids+=("$cf_pid")
+fi
 
 set +e
-wait -n "$xray_pid" "$cf_pid"
+wait -n "${pids[@]}"
 rc=$?
 set -e
 exit "$rc"
