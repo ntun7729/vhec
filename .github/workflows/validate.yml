@@ -36,6 +36,9 @@ jobs:
 
           run_vhec() {
             docker rm -f vhec-test >/dev/null 2>&1 || true
+            docker run --rm --entrypoint sh \
+              -v vhec-test-state:/etc/vhec vhec:test \
+              -c 'rm -f /etc/vhec/server.json /etc/vhec/client-v2rayng.json /etc/vhec/client-link.txt /etc/vhec/vhec.env' >/dev/null
             docker run -d --name vhec-test \
               --add-host host.docker.internal:host-gateway \
               -v vhec-test-state:/etc/vhec "$@" vhec:test >/dev/null
