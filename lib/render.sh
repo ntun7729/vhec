@@ -1,8 +1,12 @@
 write_env() {
   umask 077
   : > "$ENV_FILE"
+  TLS_ORIGIN_ENABLED="${TLS_ORIGIN_ENABLED:-0}"
+  TLS_PORT="${TLS_PORT:-}"
+  TLS_CERT_FILE="${TLS_CERT_FILE:-}"
+  TLS_KEY_FILE="${TLS_KEY_FILE:-}"
   local k
-  for k in PORT LISTEN PUBLIC_HOST UUID XHTTP_PATH XHTTP_MODE VLESSENC_AUTH DECRYPTION ENCRYPTION OUTBOUND_TYPE OUTBOUND_HOST OUTBOUND_PORT OUTBOUND_USER OUTBOUND_PASS HTTP_UDP_POLICY CF_TUNNEL_TOKEN_SET CF_DOMAIN CF_PROTOCOL; do
+  for k in PORT LISTEN PUBLIC_HOST UUID XHTTP_PATH XHTTP_MODE VLESSENC_AUTH DECRYPTION ENCRYPTION OUTBOUND_TYPE OUTBOUND_HOST OUTBOUND_PORT OUTBOUND_USER OUTBOUND_PASS HTTP_UDP_POLICY CF_TUNNEL_TOKEN_SET CF_DOMAIN CF_PROTOCOL TLS_ORIGIN_ENABLED TLS_PORT TLS_CERT_FILE TLS_KEY_FILE; do
     printf '%s=' "$k" >> "$ENV_FILE"
     printf '%q' "${!k}" >> "$ENV_FILE"
     printf '\n' >> "$ENV_FILE"
@@ -14,6 +18,10 @@ load_env() {
   [ -f "$ENV_FILE" ] || die "not installed; run: vhec install"
   # shellcheck disable=SC1090
   set -a; . "$ENV_FILE"; set +a
+  TLS_ORIGIN_ENABLED="${TLS_ORIGIN_ENABLED:-0}"
+  TLS_PORT="${TLS_PORT:-}"
+  TLS_CERT_FILE="${TLS_CERT_FILE:-}"
+  TLS_KEY_FILE="${TLS_KEY_FILE:-}"
 }
 
 set_env_key() {
@@ -55,28 +63,41 @@ make_egress_json() {
 
 render_server() {
   load_env
-  local egress rules udp_rule tmp
+  local egress rules udp_rule tmp tls_enabled
   egress="$(make_egress_json)"
-  rules='[{"type":"field","inboundTag":["vless-xhttp"],"port":"53","network":"tcp,udp","outboundTag":"dns-out"}]'
+  rules='[{"type":"field","inboundTag":["vless-xhttp","vless-xhttp-tls"],"port":"53","network":"tcp,udp","outboundTag":"dns-out"}]'
 
   if [ "$OUTBOUND_TYPE" = "http" ]; then
     case "$HTTP_UDP_POLICY" in
-      direct) udp_rule='{"type":"field","inboundTag":["vless-xhttp"],"network":"udp","outboundTag":"direct"}' ;;
-      block) udp_rule='{"type":"field","inboundTag":["vless-xhttp"],"network":"udp","outboundTag":"block"}' ;;
+      direct) udp_rule='{"type":"field","inboundTag":["vless-xhttp","vless-xhttp-tls"],"network":"udp","outboundTag":"direct"}' ;;
+      block) udp_rule='{"type":"field","inboundTag":["vless-xhttp","vless-xhttp-tls"],"network":"udp","outboundTag":"block"}' ;;
       *) die "HTTP_UDP_POLICY must be direct or block" ;;
     esac
     rules="$(jq -cn --argjson a "$rules" --argjson r "$udp_rule" '$a + [$r]')"
   fi
-  rules="$(jq -cn --argjson a "$rules" '$a + [{type:"field",inboundTag:["vless-xhttp"],outboundTag:"egress"}]')"
+  rules="$(jq -cn --argjson a "$rules" '$a + [{type:"field",inboundTag:["vless-xhttp","vless-xhttp-tls"],outboundTag:"egress"}]')"
+
+  tls_enabled=false
+  if [ "$TLS_ORIGIN_ENABLED" = "1" ]; then
+    [ -n "$TLS_PORT" ] || die "TLS_PORT is required when TLS origin is enabled"
+    case "$TLS_PORT" in *[!0-9]*|'') die "TLS_PORT must be numeric" ;; esac
+    [ -s "$TLS_CERT_FILE" ] || die "TLS origin certificate is missing: $TLS_CERT_FILE"
+    [ -s "$TLS_KEY_FILE" ] || die "TLS origin key is missing: $TLS_KEY_FILE"
+    tls_enabled=true
+  fi
 
   tmp="$(mktemp)"
   jq -n \
     --arg listen "$LISTEN" \
     --argjson port "$PORT" \
+    --argjson tls_port "${TLS_PORT:-0}" \
     --arg uuid "$UUID" \
     --arg dec "$DECRYPTION" \
     --arg path "$XHTTP_PATH" \
     --arg mode "$XHTTP_MODE" \
+    --arg cert "$TLS_CERT_FILE" \
+    --arg key "$TLS_KEY_FILE" \
+    --argjson tls_enabled "$tls_enabled" \
     --argjson egress "$egress" \
     --argjson rules "$rules" '
     {
@@ -86,7 +107,7 @@ render_server() {
         queryStrategy:"UseIPv4",
         useSystemHosts:true
       },
-      inbounds:[{
+      inbounds: ([{
         tag:"vless-xhttp",
         listen:$listen,
         port:$port,
@@ -98,7 +119,23 @@ render_server() {
           xhttpSettings:{path:$path,mode:$mode}
         },
         sniffing:{enabled:true,destOverride:["http","tls","quic"],routeOnly:false}
-      }],
+      }] + (if $tls_enabled then [{
+        tag:"vless-xhttp-tls",
+        listen:$listen,
+        port:$tls_port,
+        protocol:"vless",
+        settings:{clients:[{id:$uuid,flow:"xtls-rprx-vision"}],decryption:$dec},
+        streamSettings:{
+          network:"xhttp",
+          security:"tls",
+          tlsSettings:{
+            alpn:["h2","http/1.1"],
+            certificates:[{certificateFile:$cert,keyFile:$key}]
+          },
+          xhttpSettings:{path:$path,mode:$mode}
+        },
+        sniffing:{enabled:true,destOverride:["http","tls","quic"],routeOnly:false}
+      }] else [] end)),
       outbounds:[
         $egress,
         {tag:"dns-out",protocol:"dns",settings:{}},

@@ -6,6 +6,8 @@ services:
       CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:?set CF_TUNNEL_TOKEN in .env}
       CF_DOMAIN: ${CF_DOMAIN:?set CF_DOMAIN in .env}
       CF_PROTOCOL: ${CF_PROTOCOL:-auto}
+      PORT: ${PORT:-8080}
+      TLS_PORT: ${TLS_PORT:-8443}
       XHTTP_MODE: ${XHTTP_MODE:-auto}
       OUTBOUND_TYPE: ${OUTBOUND_TYPE:-direct}
       OUTBOUND_HOST: ${OUTBOUND_HOST:-}
@@ -20,6 +22,8 @@ services:
       - vhec-state:/etc/vhec
     expose:
       - "30"
+      - "${PORT:-8080}"
+      - "${TLS_PORT:-8443}"
 
 volumes:
   vhec-state:

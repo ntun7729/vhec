@@ -51,19 +51,50 @@ jobs:
             test "$(docker inspect -f '{{.State.Running}}' vhec-test)" = true
           }
 
+          tls_h2_ready() {
+            docker exec vhec-test sh -c \
+              'timeout 4 openssl s_client -connect 127.0.0.1:8443 -servername localhost -alpn h2 </dev/null 2>/dev/null | grep -q "ALPN protocol: h2"'
+          }
+
           run_vhec
           docker exec vhec-test test -s /etc/vhec/client-v2rayng.json
+          docker exec vhec-test test -s /etc/vhec/origin-cert.pem
+          docker exec vhec-test test -s /etc/vhec/origin-key.pem
           docker exec vhec-test xray run -test -config /etc/vhec/server.json
           docker exec vhec-test xray run -test -config /etc/vhec/client-v2rayng.json
+          docker exec vhec-test jq -e '
+            (.inbounds | length) == 2 and
+            .inbounds[0].tag == "vless-xhttp" and
+            .inbounds[0].port == 8080 and
+            .inbounds[0].streamSettings.security == "none" and
+            .inbounds[0].streamSettings.xhttpSettings.mode == "auto" and
+            .inbounds[1].tag == "vless-xhttp-tls" and
+            .inbounds[1].port == 8443 and
+            .inbounds[1].streamSettings.security == "tls" and
+            .inbounds[1].streamSettings.tlsSettings.alpn[0] == "h2" and
+            .inbounds[1].streamSettings.xhttpSettings.mode == "auto"
+          ' /etc/vhec/server.json >/dev/null
+          grep_link="$(docker exec vhec-test cat /etc/vhec/client-link.txt)"
+          printf '%s\n' "$grep_link" | grep -q 'mode=auto'
+
+          for _ in $(seq 1 20); do
+            if tls_h2_ready; then break; fi
+            sleep 0.5
+          done
+          tls_h2_ready
+
           test "$(docker exec vhec-test sh -c 'printf "GET /healthz HTTP/1.0\r\n\r\n" | socat - TCP:127.0.0.1:30 | tail -n1')" = ok
           v_link="$(docker exec vhec-test cat /etc/vhec/client-link.txt)"
           test "$(docker exec vhec-test sh -c 'printf "GET /v HTTP/1.0\r\n\r\n" | socat - TCP:127.0.0.1:30 | tail -n1')" = "$v_link"
           test -z "$(docker logs vhec-test 2>&1)"
           uuid_before="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
+          cert_before="$(docker exec vhec-test openssl x509 -in /etc/vhec/origin-cert.pem -noout -fingerprint -sha256)"
 
           run_vhec
           uuid_after="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
+          cert_after="$(docker exec vhec-test openssl x509 -in /etc/vhec/origin-cert.pem -noout -fingerprint -sha256)"
           test "$uuid_before" = "$uuid_after"
+          test "$cert_before" = "$cert_after"
 
           # Anonymous HTTP proxy: host+port alone must be sufficient. Localhost
           # is mapped to the Docker host gateway and auth fields must be absent.

@@ -34,9 +34,9 @@ RUN chmod 0755 /usr/local/bin/vhec-entrypoint /usr/local/bin/vhec-web \
  && chmod 0700 /etc/vhec
 
 LABEL org.opencontainers.image.source="https://github.com/ntun7729/vhec"
-LABEL org.opencontainers.image.description="VLESS Encryption + Vision + XHTTP with optional Cloudflare Tunnel and selectable egress"
+LABEL org.opencontainers.image.description="VLESS Encryption + Vision + XHTTP with Cloudflare TLS/H2 origin and selectable egress"
 
 VOLUME ["/etc/vhec"]
-EXPOSE 30
+EXPOSE 30 8080 8443
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD printf 'GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n' | socat - TCP:127.0.0.1:30,connect-timeout=2 2>/dev/null | tail -n 1 | grep -qx 'ok'
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/vhec-entrypoint"]

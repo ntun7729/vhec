@@ -37,6 +37,20 @@ generate_vlessenc() {
   [ -n "$DECRYPTION" ] && [ -n "$ENCRYPTION" ] || die "failed to parse xray vlessenc output"
 }
 
+generate_origin_tls() {
+  if [ -s "$TLS_CERT_FILE" ] && [ -s "$TLS_KEY_FILE" ]; then
+    return
+  fi
+  rm -f "$TLS_CERT_FILE" "$TLS_KEY_FILE"
+  umask 077
+  openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 3650 \
+    -subj '/CN=localhost' \
+    -keyout "$TLS_KEY_FILE" \
+    -out "$TLS_CERT_FILE" >/dev/null 2>&1
+  chmod 0600 "$TLS_KEY_FILE"
+  chmod 0644 "$TLS_CERT_FILE"
+}
+
 docker_gateway_ip() {
   local hex
   hex="$(awk '$2=="00000000" {print $3; exit}' /proc/net/route 2>/dev/null || true)"
@@ -101,6 +115,14 @@ fi
 
 PORT="${PORT:-8080}"
 case "$PORT" in *[!0-9]*|'') die "PORT must be numeric" ;; esac
+TLS_ORIGIN_ENABLED=1
+TLS_PORT="${TLS_PORT:-8443}"
+case "$TLS_PORT" in *[!0-9]*|'') die "TLS_PORT must be numeric" ;; esac
+[ "$TLS_PORT" != "$PORT" ] || die "TLS_PORT must differ from PORT"
+TLS_CERT_FILE="${TLS_CERT_FILE:-$STATE_DIR/origin-cert.pem}"
+TLS_KEY_FILE="${TLS_KEY_FILE:-$STATE_DIR/origin-key.pem}"
+generate_origin_tls
+
 PUBLIC_HOST="${PUBLIC_HOST:-}"
 OUTBOUND_TYPE="${OUTBOUND_TYPE:-direct}"
 OUTBOUND_HOST="${OUTBOUND_HOST:-}"
@@ -110,18 +132,17 @@ OUTBOUND_PASS="${OUTBOUND_PASS:-}"
 HTTP_UDP_POLICY="${HTTP_UDP_POLICY:-block}"
 CF_DOMAIN="${CF_DOMAIN:-}"
 CF_PROTOCOL="${CF_PROTOCOL:-auto}"
+XHTTP_MODE="${XHTTP_MODE:-auto}"
 
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
   CF_TUNNEL_TOKEN_SET=1
   LISTEN="${LISTEN:-127.0.0.1}"
-  XHTTP_MODE="${XHTTP_MODE:-auto}"
   umask 077
   printf '%s' "$CF_TUNNEL_TOKEN" > "$TOKEN_FILE"
   chmod 0600 "$TOKEN_FILE"
 else
   CF_TUNNEL_TOKEN_SET=0
   LISTEN="${LISTEN:-0.0.0.0}"
-  XHTTP_MODE="${XHTTP_MODE:-stream-one}"
   rm -f "$TOKEN_FILE"
 fi
 
