@@ -29,6 +29,14 @@ set_env_key() {
   rm -f "$tmp"
 }
 
+validate_xray_config() {
+  local file="$1" output
+  if ! output=$("$XRAY_BIN" run -test -config "$file" 2>&1); then
+    printf '[vhec] Xray rejected generated config %s:\n%s\n' "$file" "$output" >&2
+    return 1
+  fi
+}
+
 make_egress_json() {
   case "$OUTBOUND_TYPE" in
     direct)
@@ -100,7 +108,7 @@ render_server() {
       routing:{domainStrategy:"AsIs",rules:$rules}
     }' > "$tmp"
 
-  "$XRAY_BIN" run -test -config "$tmp" >/dev/null
+  validate_xray_config "$tmp"
   install -m 0600 "$tmp" "$SERVER_CONFIG"
   rm -f "$tmp"
 }
@@ -149,7 +157,7 @@ render_client() {
       routing:{domainStrategy:"AsIs",rules:[{type:"field",ip:["198.18.0.0/15"],outboundTag:"proxy"}]}
     }' > "$tmp"
 
-  "$XRAY_BIN" run -test -config "$tmp" >/dev/null
+  validate_xray_config "$tmp"
   install -m 0600 "$tmp" "$CLIENT_CONFIG"
   rm -f "$tmp"
 
