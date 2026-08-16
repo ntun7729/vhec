@@ -157,7 +157,7 @@ sudo vhec udp-policy block
 
 Port-53 traffic arriving through the VLESS inbound is handled first by Xray's `dns` outbound, so DNS does not depend on the HTTP proxy's UDP support.
 
-The generated client file contains the standard Xray FakeDNS pool:
+The generated client file contains the standard Xray FakeDNS pool. The top-level Xray key is `fakeDns`; the DNS server/sniffer token remains lowercase `fakedns`:
 
 ```json
 {
@@ -165,7 +165,7 @@ The generated client file contains the standard Xray FakeDNS pool:
     "servers": ["fakedns", "1.1.1.1"],
     "queryStrategy": "UseIPv4"
   },
-  "fakedns": [
+  "fakeDns": [
     {
       "ipPool": "198.18.0.0/15",
       "poolSize": 65535
