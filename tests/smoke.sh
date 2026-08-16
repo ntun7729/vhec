@@ -11,7 +11,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sudo env PUBLIC_HOST=203.0.113.10 PORT=24443 HTTP_UDP_POLICY=block bash -x "$ROOT/vhec.sh" install
+sudo env PUBLIC_HOST=203.0.113.10 PORT=24443 HTTP_UDP_POLICY=block bash "$ROOT/vhec.sh" install
 
 sudo jq -e '
   .inbounds[0].protocol == "vless" and
@@ -31,8 +31,8 @@ sudo jq -e '
   .outbounds[0].streamSettings.xhttpSettings.host == "203.0.113.10"
 ' /etc/vhec/client-v2rayng.json >/dev/null
 
-grep -q 'type=xhttp' /etc/vhec/client-link.txt
-grep -q 'flow=xtls-rprx-vision' /etc/vhec/client-link.txt
+sudo grep -q 'type=xhttp' /etc/vhec/client-link.txt
+sudo grep -q 'flow=xtls-rprx-vision' /etc/vhec/client-link.txt
 
 sudo "$VHEC" outbound http 127.0.0.1 18080
 sudo "$VHEC" udp-policy block
