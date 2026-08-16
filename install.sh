@@ -66,11 +66,78 @@ fetch_file() {
   fi
 }
 
+ensure_socat() {
+  command -v socat >/dev/null 2>&1 && return
+  log "installing socat for subscription/status server"
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y socat
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y socat
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y socat
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache socat
+  else
+    die "socat is required for the subscription server"
+  fi
+}
+
+install_subscription_service() {
+  local socat_bin
+  ensure_socat
+  socat_bin="$(command -v socat)"
+  install -m 0755 "$TMP_DIR/docker-web.sh" /usr/local/bin/vhec-web
+
+  if command -v systemctl >/dev/null 2>&1 && [ "$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')" = systemd ]; then
+    cat > /etc/systemd/system/vhec-web.service <<EOF_UNIT
+[Unit]
+Description=VHEC subscription/status server
+After=network-online.target vhec-xray.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$socat_bin TCP-LISTEN:$STATUS_PORT,bind=$STATUS_LISTEN,reuseaddr,fork EXEC:/usr/local/bin/vhec-web
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF_UNIT
+    systemctl daemon-reload
+    systemctl enable vhec-web.service >/dev/null
+    systemctl restart vhec-web.service
+  elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
+    cat > /etc/init.d/vhec-web <<EOF_RC
+#!/sbin/openrc-run
+command="$socat_bin"
+command_args="TCP-LISTEN:$STATUS_PORT,bind=$STATUS_LISTEN,reuseaddr,fork EXEC:/usr/local/bin/vhec-web"
+command_background="yes"
+pidfile="/run/vhec-web.pid"
+depend() { need net; after vhec-xray; }
+EOF_RC
+    chmod 0755 /etc/init.d/vhec-web
+    rc-update add vhec-web default >/dev/null 2>&1 || true
+    rc-service vhec-web restart || rc-service vhec-web start
+  else
+    mkdir -p /run/vhec
+    if [ -f /run/vhec/web.pid ]; then
+      kill "$(cat /run/vhec/web.pid)" 2>/dev/null || true
+    fi
+    nohup "$socat_bin" "TCP-LISTEN:$STATUS_PORT,bind=$STATUS_LISTEN,reuseaddr,fork" EXEC:/usr/local/bin/vhec-web >/var/log/vhec-web.log 2>&1 &
+    echo $! >/run/vhec/web.pid
+  fi
+}
+
 log "downloading VHEC host installer"
 fetch_file vhec.sh "$TMP_DIR/vhec.sh"
 fetch_file lib/render.sh "$TMP_DIR/lib/render.sh"
 fetch_file lib/services.sh "$TMP_DIR/lib/services.sh"
-chmod 0755 "$TMP_DIR/vhec.sh"
+fetch_file docker-web.sh "$TMP_DIR/docker-web.sh"
+chmod 0755 "$TMP_DIR/vhec.sh" "$TMP_DIR/docker-web.sh"
 
 CF_TUNNEL_TOKEN="${CF_TUNNEL_TOKEN:-}"
 CF_DOMAIN="${CF_DOMAIN:-}"
@@ -85,6 +152,8 @@ HTTP_UDP_POLICY="${HTTP_UDP_POLICY:-block}"
 VLESSENC_AUTH="${VLESSENC_AUTH:-x25519}"
 PORT="${PORT:-8080}"
 TLS_PORT="${TLS_PORT:-8443}"
+STATUS_PORT="${STATUS_PORT:-30}"
+STATUS_LISTEN="${STATUS_LISTEN:-0.0.0.0}"
 
 ask_secret CF_TUNNEL_TOKEN "Cloudflare Tunnel token (leave empty for no tunnel)" "$CF_TUNNEL_TOKEN"
 if [ -n "$CF_TUNNEL_TOKEN" ]; then
@@ -119,6 +188,7 @@ case "$HTTP_UDP_POLICY" in direct|block) ;; *) die "invalid HTTP_UDP_POLICY: $HT
 case "$VLESSENC_AUTH" in x25519|X25519|mlkem768|ml-kem-768|pq) ;; *) die "invalid VLESSENC_AUTH: $VLESSENC_AUTH" ;; esac
 case "$PORT" in *[!0-9]*|'') die "PORT must be numeric" ;; esac
 case "$TLS_PORT" in *[!0-9]*|'') die "TLS_PORT must be numeric" ;; esac
+case "$STATUS_PORT" in *[!0-9]*|'') die "STATUS_PORT must be numeric" ;; esac
 [ "$PORT" != "$TLS_PORT" ] || die "PORT and TLS_PORT must differ"
 
 if [ "${VHEC_INSTALL_PREFLIGHT_ONLY:-0}" = "1" ]; then
@@ -131,12 +201,16 @@ export CF_TUNNEL_TOKEN CF_DOMAIN CF_PROTOCOL XHTTP_MODE
 export OUTBOUND_TYPE OUTBOUND_HOST OUTBOUND_PORT OUTBOUND_USER OUTBOUND_PASS
 export HTTP_UDP_POLICY VLESSENC_AUTH PORT TLS_PORT
 bash "$TMP_DIR/vhec.sh" install
+install_subscription_service
 
 printf '\nOne-click host installation complete.\n'
 if [ -n "$CF_TUNNEL_TOKEN" ]; then
   printf 'Cloudflare origin: https://127.0.0.1:%s\n' "$TLS_PORT"
   printf 'Cloudflare route settings: HTTP2 connection = On, No TLS Verify = On\n'
 fi
-printf 'Client link: sudo vhec client\n'
-printf 'Status:      sudo vhec status\n'
-printf 'Settings:    sudo vhec show\n'
+printf 'Subscription: http://SERVER_IP:%s/v\n' "$STATUS_PORT"
+printf 'Health check:  http://SERVER_IP:%s/healthz\n' "$STATUS_PORT"
+printf 'Client link:   sudo vhec client\n'
+printf 'Status:        sudo vhec status\n'
+printf 'Settings:      sudo vhec show\n'
+printf '\nPort %s exposes the VLESS client link. Allow TCP %s in the host/cloud firewall only if you want remote subscription access.\n' "$STATUS_PORT" "$STATUS_PORT"
