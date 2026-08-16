@@ -34,38 +34,47 @@ jobs:
           }
           trap cleanup EXIT
 
-          docker run -d --name vhec-test -v vhec-test-state:/etc/vhec vhec:test >/dev/null
-          for _ in $(seq 1 30); do
-            if docker exec vhec-test test -s /etc/vhec/server.json 2>/dev/null; then
-              health="$(docker exec vhec-test bash -lc "printf 'GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1" || true)"
-              [ "$health" = ok ] && break
-            fi
-            sleep 0.5
-          done
+          run_vhec() {
+            docker rm -f vhec-test >/dev/null 2>&1 || true
+            docker run -d --name vhec-test \
+              --add-host host.docker.internal:host-gateway \
+              -v vhec-test-state:/etc/vhec "$@" vhec:test >/dev/null
+            for _ in $(seq 1 30); do
+              if docker exec vhec-test test -s /etc/vhec/server.json 2>/dev/null; then
+                break
+              fi
+              sleep 0.5
+            done
+            test "$(docker inspect -f '{{.State.Running}}' vhec-test)" = true
+          }
 
-          test "$(docker inspect -f '{{.State.Running}}' vhec-test)" = true
-          test "$(docker inspect -f '{{.State.Health.Status}}' vhec-test)" != unhealthy
+          run_vhec
           docker exec vhec-test test -s /etc/vhec/client-v2rayng.json
           docker exec vhec-test xray run -test -config /etc/vhec/server.json
           docker exec vhec-test xray run -test -config /etc/vhec/client-v2rayng.json
-
-          health="$(docker exec vhec-test bash -lc "printf 'GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1")"
-          test "$health" = ok
-          v_body="$(docker exec vhec-test bash -lc "printf 'GET /v HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1")"
-          v_file="$(docker exec vhec-test cat /etc/vhec/client-link.txt)"
-          test "$v_body" = "$v_file"
+          test "$(docker exec vhec-test sh -c 'printf "GET /healthz HTTP/1.0\r\n\r\n" | socat - TCP:127.0.0.1:30 | tail -n1')" = ok
+          v_link="$(docker exec vhec-test cat /etc/vhec/client-link.txt)"
+          test "$(docker exec vhec-test sh -c 'printf "GET /v HTTP/1.0\r\n\r\n" | socat - TCP:127.0.0.1:30 | tail -n1')" = "$v_link"
           test -z "$(docker logs vhec-test 2>&1)"
-
           uuid_before="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
-          docker rm -f vhec-test >/dev/null
-          docker run -d --name vhec-test -v vhec-test-state:/etc/vhec vhec:test >/dev/null
-          for _ in $(seq 1 30); do
-            if docker exec vhec-test test -s /etc/vhec/identity.json 2>/dev/null; then
-              health="$(docker exec vhec-test bash -lc "printf 'GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - TCP:127.0.0.1:30 2>/dev/null | tail -n 1" || true)"
-              [ "$health" = ok ] && break
-            fi
-            sleep 0.5
-          done
+
+          run_vhec
           uuid_after="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
           test "$uuid_before" = "$uuid_after"
+
+          # Anonymous HTTP proxy: host+port alone must be sufficient. Localhost
+          # is mapped to the Docker host gateway and auth fields must be absent.
+          run_vhec -e OUTBOUND_TYPE=http -e OUTBOUND_HOST=127.0.0.1 -e OUTBOUND_PORT=3128
+          docker exec vhec-test jq -e '.outbounds[0].protocol == "http"' /etc/vhec/server.json >/dev/null
+          docker exec vhec-test jq -e '.outbounds[0].settings.address == "host.docker.internal"' /etc/vhec/server.json >/dev/null
+          docker exec vhec-test jq -e '(.outbounds[0].settings | has("user") | not) and (.outbounds[0].settings | has("pass") | not)' /etc/vhec/server.json >/dev/null
+          docker exec vhec-test xray run -test -config /etc/vhec/server.json
+          test -z "$(docker logs vhec-test 2>&1)"
+
+          # Anonymous SOCKS5 proxy: host+port alone must also be sufficient.
+          run_vhec -e OUTBOUND_TYPE=socks -e OUTBOUND_HOST=localhost -e OUTBOUND_PORT=1080
+          docker exec vhec-test jq -e '.outbounds[0].protocol == "socks"' /etc/vhec/server.json >/dev/null
+          docker exec vhec-test jq -e '.outbounds[0].settings.address == "host.docker.internal"' /etc/vhec/server.json >/dev/null
+          docker exec vhec-test jq -e '(.outbounds[0].settings | has("user") | not) and (.outbounds[0].settings | has("pass") | not)' /etc/vhec/server.json >/dev/null
+          docker exec vhec-test xray run -test -config /etc/vhec/server.json
           test -z "$(docker logs vhec-test 2>&1)"

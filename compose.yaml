@@ -2,8 +2,6 @@ services:
   vhec:
     image: ghcr.io/ntun7729/vhec:latest
     restart: unless-stopped
-    expose:
-      - "30"
     environment:
       CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:?set CF_TUNNEL_TOKEN in .env}
       CF_DOMAIN: ${CF_DOMAIN:?set CF_DOMAIN in .env}
@@ -16,8 +14,12 @@ services:
       OUTBOUND_PASS: ${OUTBOUND_PASS:-}
       HTTP_UDP_POLICY: ${HTTP_UDP_POLICY:-block}
       VLESSENC_AUTH: ${VLESSENC_AUTH:-x25519}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - vhec-state:/etc/vhec
+    expose:
+      - "30"
 
 volumes:
   vhec-state:

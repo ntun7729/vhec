@@ -37,6 +37,38 @@ generate_vlessenc() {
   [ -n "$DECRYPTION" ] && [ -n "$ENCRYPTION" ] || die "failed to parse xray vlessenc output"
 }
 
+docker_gateway_ip() {
+  local hex
+  hex="$(awk '$2=="00000000" {print $3; exit}' /proc/net/route 2>/dev/null || true)"
+  [ "${#hex}" -eq 8 ] || return 1
+  printf '%d.%d.%d.%d' \
+    "$((16#${hex:6:2}))" "$((16#${hex:4:2}))" "$((16#${hex:2:2}))" "$((16#${hex:0:2}))"
+}
+
+normalize_outbound_host() {
+  [ "$OUTBOUND_TYPE" = direct ] && return 0
+
+  case "$OUTBOUND_HOST" in
+    http://*) OUTBOUND_HOST="${OUTBOUND_HOST#http://}" ;;
+    socks5://*) OUTBOUND_HOST="${OUTBOUND_HOST#socks5://}" ;;
+    socks://*) OUTBOUND_HOST="${OUTBOUND_HOST#socks://}" ;;
+  esac
+  OUTBOUND_HOST="${OUTBOUND_HOST%/}"
+
+  # Inside Docker, localhost is the vhec container itself. For a proxy running
+  # on the NAT host, transparently use Docker's host gateway instead.
+  case "$OUTBOUND_HOST" in
+    127.0.0.1|localhost|0.0.0.0|::1)
+      if getent hosts host.docker.internal >/dev/null 2>&1; then
+        OUTBOUND_HOST=host.docker.internal
+      else
+        OUTBOUND_HOST="$(docker_gateway_ip || true)"
+        [ -n "$OUTBOUND_HOST" ] || die "could not determine Docker host gateway for local outbound proxy"
+      fi
+      ;;
+  esac
+}
+
 VLESSENC_AUTH="${VLESSENC_AUTH:-x25519}"
 case "$VLESSENC_AUTH" in
   x25519|X25519) VLESSENC_AUTH=x25519 ;;
@@ -98,6 +130,7 @@ case "$OUTBOUND_TYPE" in direct|socks|http) ;; *) die "OUTBOUND_TYPE must be dir
 if [ "$OUTBOUND_TYPE" != direct ]; then
   [ -n "$OUTBOUND_HOST" ] && [ -n "$OUTBOUND_PORT" ] || die "OUTBOUND_HOST and OUTBOUND_PORT are required for $OUTBOUND_TYPE"
   case "$OUTBOUND_PORT" in *[!0-9]*|'') die "OUTBOUND_PORT must be numeric" ;; esac
+  normalize_outbound_host
 fi
 case "$HTTP_UDP_POLICY" in direct|block) ;; *) die "HTTP_UDP_POLICY must be direct or block" ;; esac
 
