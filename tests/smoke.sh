@@ -18,16 +18,32 @@ on_error() {
 trap cleanup EXIT
 trap on_error ERR
 
-sudo env PUBLIC_HOST=203.0.113.10 PORT=24443 HTTP_UDP_POLICY=block bash "$ROOT/vhec.sh" install
+sudo env PUBLIC_HOST=203.0.113.10 PORT=24443 TLS_PORT=24444 HTTP_UDP_POLICY=block bash "$ROOT/vhec.sh" install
 
 sudo jq -e '
+  (.inbounds | length) == 2 and
   .inbounds[0].protocol == "vless" and
   .inbounds[0].settings.clients[0].flow == "xtls-rprx-vision" and
   .inbounds[0].streamSettings.network == "xhttp" and
-  .inbounds[0].streamSettings.xhttpSettings.mode == "stream-one" and
+  .inbounds[0].streamSettings.security == "none" and
+  .inbounds[0].streamSettings.xhttpSettings.mode == "auto" and
   .inbounds[0].sniffing.routeOnly == false and
+  .inbounds[1].port == 24444 and
+  .inbounds[1].streamSettings.security == "tls" and
+  .inbounds[1].streamSettings.tlsSettings.alpn[0] == "h2" and
+  .inbounds[1].streamSettings.xhttpSettings.mode == "auto" and
   .outbounds[0].protocol == "freedom"
 ' /etc/vhec/server.json >/dev/null
+
+sudo test -s /etc/vhec/origin-cert.pem
+sudo test -s /etc/vhec/origin-key.pem
+for _ in $(seq 1 20); do
+  if timeout 4 openssl s_client -connect 127.0.0.1:24444 -servername localhost -alpn h2 </dev/null 2>/dev/null | grep -q 'ALPN protocol: h2'; then
+    break
+  fi
+  sleep 0.5
+done
+timeout 4 openssl s_client -connect 127.0.0.1:24444 -servername localhost -alpn h2 </dev/null 2>/dev/null | grep -q 'ALPN protocol: h2'
 
 sudo jq -e '
   .dns.servers[0] == "fakedns" and
@@ -35,11 +51,13 @@ sudo jq -e '
   .inbounds[0].sniffing.destOverride[0] == "fakedns" and
   .inbounds[0].sniffing.routeOnly == false and
   .outbounds[0].streamSettings.network == "xhttp" and
+  .outbounds[0].streamSettings.xhttpSettings.mode == "auto" and
   .outbounds[0].streamSettings.xhttpSettings.host == "203.0.113.10"
 ' /etc/vhec/client-v2rayng.json >/dev/null
 
 sudo grep -q 'type=xhttp' /etc/vhec/client-link.txt
 sudo grep -q 'flow=xtls-rprx-vision' /etc/vhec/client-link.txt
+sudo grep -q 'mode=auto' /etc/vhec/client-link.txt
 
 sudo "$VHEC" outbound http 127.0.0.1 18080
 sudo "$VHEC" udp-policy block

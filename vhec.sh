@@ -110,13 +110,39 @@ generate_vlessenc() {
   [ -n "$DECRYPTION" ] && [ -n "$ENCRYPTION" ] || die "failed to parse xray vlessenc output"
 }
 
+generate_origin_tls() {
+  if [ -s "$TLS_CERT_FILE" ] && [ -s "$TLS_KEY_FILE" ]; then
+    return
+  fi
+  rm -f "$TLS_CERT_FILE" "$TLS_KEY_FILE"
+  umask 077
+  openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 3650 \
+    -subj '/CN=localhost' \
+    -keyout "$TLS_KEY_FILE" \
+    -out "$TLS_CERT_FILE" >/dev/null 2>&1
+  chmod 0600 "$TLS_KEY_FILE"
+  chmod 0644 "$TLS_CERT_FILE"
+}
+
+configure_tls_origin() {
+  TLS_ORIGIN_ENABLED=1
+  TLS_PORT="${TLS_PORT:-8443}"
+  case "$TLS_PORT" in *[!0-9]*|'') die "TLS_PORT must be numeric" ;; esac
+  [ "$TLS_PORT" != "$PORT" ] || die "TLS_PORT must differ from PORT"
+  TLS_CERT_FILE="${TLS_CERT_FILE:-$STATE_DIR/origin-cert.pem}"
+  TLS_KEY_FILE="${TLS_KEY_FILE:-$STATE_DIR/origin-key.pem}"
+  generate_origin_tls
+}
+
 install_cmd() {
   need_root
   install_packages
   mkdir -p "$STATE_DIR" /usr/local/share/xray
+  chmod 0700 "$STATE_DIR" 2>/dev/null || true
   install_xray
 
   PORT="${PORT:-8080}"
+  case "$PORT" in *[!0-9]*|'') die "PORT must be numeric" ;; esac
   PUBLIC_HOST="${PUBLIC_HOST:-}"
   UUID="${UUID:-$(generate_uuid)}"
   XHTTP_PATH="${XHTTP_PATH:-$(random_path)}"
@@ -126,14 +152,23 @@ install_cmd() {
   OUTBOUND_PORT="${OUTBOUND_PORT:-}"
   OUTBOUND_USER="${OUTBOUND_USER:-}"
   OUTBOUND_PASS="${OUTBOUND_PASS:-}"
-  HTTP_UDP_POLICY="${HTTP_UDP_POLICY:-direct}"
+  HTTP_UDP_POLICY="${HTTP_UDP_POLICY:-block}"
   CF_DOMAIN="${CF_DOMAIN:-}"
   CF_PROTOCOL="${CF_PROTOCOL:-auto}"
+  XHTTP_MODE="${XHTTP_MODE:-auto}"
+  configure_tls_origin
+
+  case "$XHTTP_MODE" in auto|packet-up|stream-up|stream-one) ;; *) die "XHTTP_MODE must be auto, packet-up, stream-up, or stream-one" ;; esac
+  case "$OUTBOUND_TYPE" in direct|socks|http) ;; *) die "OUTBOUND_TYPE must be direct, socks, or http" ;; esac
+  if [ "$OUTBOUND_TYPE" != direct ]; then
+    [ -n "$OUTBOUND_HOST" ] && [ -n "$OUTBOUND_PORT" ] || die "OUTBOUND_HOST and OUTBOUND_PORT are required for $OUTBOUND_TYPE"
+    case "$OUTBOUND_PORT" in *[!0-9]*|'') die "OUTBOUND_PORT must be numeric" ;; esac
+  fi
+  case "$HTTP_UDP_POLICY" in direct|block) ;; *) die "HTTP_UDP_POLICY must be direct or block" ;; esac
 
   if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
     CF_TUNNEL_TOKEN_SET=1
     LISTEN="${LISTEN:-127.0.0.1}"
-    XHTTP_MODE="${XHTTP_MODE:-auto}"
     install_cloudflared
     umask 077
     printf '%s' "$CF_TUNNEL_TOKEN" > "$STATE_DIR/cloudflared.token"
@@ -141,7 +176,6 @@ install_cmd() {
   else
     CF_TUNNEL_TOKEN_SET=0
     LISTEN="${LISTEN:-0.0.0.0}"
-    XHTTP_MODE="${XHTTP_MODE:-stream-one}"
     rm -f "$STATE_DIR/cloudflared.token"
   fi
 
@@ -198,17 +232,23 @@ cloudflare_cmd() {
     enable)
       [ -n "$token" ] || die "usage: vhec cloudflare enable TOKEN [DOMAIN]"
       install_cloudflared
+      PORT="${PORT:-8080}"
+      configure_tls_origin
       umask 077; printf '%s' "$token" > "$STATE_DIR/cloudflared.token"; chmod 0600 "$STATE_DIR/cloudflared.token"
       set_env_key CF_TUNNEL_TOKEN_SET 1
       set_env_key LISTEN 127.0.0.1
       set_env_key XHTTP_MODE auto
+      set_env_key TLS_ORIGIN_ENABLED 1
+      set_env_key TLS_PORT "$TLS_PORT"
+      set_env_key TLS_CERT_FILE "$TLS_CERT_FILE"
+      set_env_key TLS_KEY_FILE "$TLS_KEY_FILE"
       [ -n "$domain" ] && set_env_key CF_DOMAIN "$domain"
       ;;
     disable)
       rm -f "$STATE_DIR/cloudflared.token"
       set_env_key CF_TUNNEL_TOKEN_SET 0
       set_env_key LISTEN 0.0.0.0
-      set_env_key XHTTP_MODE stream-one
+      set_env_key XHTTP_MODE auto
       ;;
     domain)
       [ -n "$token" ] || die "usage: vhec cloudflare domain DOMAIN"
@@ -238,7 +278,10 @@ show_cmd() {
   load_env
   printf '\nVHEC\n'
   printf '  inbound       VLESS Encryption + xtls-rprx-vision + XHTTP\n'
-  printf '  listen        %s:%s\n' "$LISTEN" "$PORT"
+  printf '  plain origin  http://%s:%s\n' "$LISTEN" "$PORT"
+  if [ "$TLS_ORIGIN_ENABLED" = 1 ]; then
+    printf '  TLS/H2 origin https://%s:%s\n' "$LISTEN" "$TLS_PORT"
+  fi
   printf '  XHTTP mode    %s\n' "$XHTTP_MODE"
   printf '  outbound      %s' "$OUTBOUND_TYPE"
   [ "$OUTBOUND_TYPE" = direct ] || printf ' -> %s:%s' "$OUTBOUND_HOST" "$OUTBOUND_PORT"
@@ -246,7 +289,12 @@ show_cmd() {
   printf '  HTTP UDP      %s\n' "$HTTP_UDP_POLICY"
   if [ "$CF_TUNNEL_TOKEN_SET" = 1 ]; then
     printf '  cloudflared   enabled (%s)\n' "${CF_DOMAIN:-domain-not-set}"
-    printf '  CF origin     http://127.0.0.1:%s\n' "$PORT"
+    if [ "$TLS_ORIGIN_ENABLED" = 1 ]; then
+      printf '  CF origin     https://127.0.0.1:%s\n' "$TLS_PORT"
+      printf '  CF settings   HTTP2 connection=On, No TLS Verify=On\n'
+    else
+      printf '  CF origin     http://127.0.0.1:%s\n' "$PORT"
+    fi
     printf '  XHTTP path    %s\n' "$XHTTP_PATH"
   else
     printf '  cloudflared   disabled\n'
@@ -312,7 +360,7 @@ Commands:
   vhec logs
 
 Install environment variables:
-  PORT=8080 PUBLIC_HOST=1.2.3.4 XHTTP_MODE=stream-one
+  PORT=8080 TLS_PORT=8443 PUBLIC_HOST=1.2.3.4 XHTTP_MODE=auto
   OUTBOUND_TYPE=direct|socks|http OUTBOUND_HOST=... OUTBOUND_PORT=...
   OUTBOUND_USER=... OUTBOUND_PASS=... HTTP_UDP_POLICY=direct|block
   VLESSENC_AUTH=x25519|mlkem768
