@@ -24,7 +24,8 @@ else
 fi
 
 ask() {
-  local var="$1" label="$2" default="${3:-}" value="${!var:-}"
+  local var="$1" label="$2" default="${3:-}" value
+  value="${!var}"
   if [ -n "$value" ]; then return; fi
   if [ -z "$TTY" ]; then
     printf -v "$var" '%s' "$default"
@@ -40,7 +41,8 @@ ask() {
 }
 
 ask_secret() {
-  local var="$1" label="$2" value="${!var:-}"
+  local var="$1" label="$2" value
+  value="${!var}"
   if [ -n "$value" ]; then return; fi
   if [ -z "$TTY" ]; then return; fi
   printf '%s: ' "$label" >"$TTY"
