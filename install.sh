@@ -17,35 +17,34 @@ trap cleanup EXIT
 
 need_root
 
-if [ -r /dev/tty ]; then
-  TTY=/dev/tty
-else
-  TTY=''
+TTY_FD=''
+if { exec 3<>/dev/tty; } 2>/dev/null; then
+  TTY_FD=3
 fi
 
 ask() {
   local var="$1" label="$2" default="${3:-}" current="${4:-}" value
   if [ -n "$current" ]; then return; fi
-  if [ -z "$TTY" ]; then
+  if [ -z "$TTY_FD" ]; then
     printf -v "$var" '%s' "$default"
     return
   fi
   if [ -n "$default" ]; then
-    printf '%s [%s]: ' "$label" "$default" >"$TTY"
+    printf '%s [%s]: ' "$label" "$default" >&3
   else
-    printf '%s: ' "$label" >"$TTY"
+    printf '%s: ' "$label" >&3
   fi
-  IFS= read -r value <"$TTY" || true
+  IFS= read -r value <&3 || true
   printf -v "$var" '%s' "${value:-$default}"
 }
 
 ask_secret() {
   local var="$1" label="$2" current="${3:-}" value
   if [ -n "$current" ]; then return; fi
-  if [ -z "$TTY" ]; then return; fi
-  printf '%s: ' "$label" >"$TTY"
-  IFS= read -r -s value <"$TTY" || true
-  printf '\n' >"$TTY"
+  if [ -z "$TTY_FD" ]; then return; fi
+  printf '%s: ' "$label" >&3
+  IFS= read -r -s value <&3 || true
+  printf '\n' >&3
   printf -v "$var" '%s' "$value"
 }
 
