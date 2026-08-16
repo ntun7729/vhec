@@ -85,9 +85,14 @@ restart_services() {
   load_env
   case "$(service_manager)" in
     systemd)
+      # A user may legitimately apply several config changes in quick succession.
+      # Reset systemd's restart-rate counter so clean operator-driven restarts are
+      # not rejected with start-limit-hit.
+      systemctl reset-failed vhec-xray.service >/dev/null 2>&1 || true
       systemctl restart vhec-xray.service
       if [ "$CF_TUNNEL_TOKEN_SET" = "1" ]; then
         systemctl enable vhec-cloudflared.service >/dev/null
+        systemctl reset-failed vhec-cloudflared.service >/dev/null 2>&1 || true
         systemctl restart vhec-cloudflared.service
       else
         systemctl disable --now vhec-cloudflared.service >/dev/null 2>&1 || true
