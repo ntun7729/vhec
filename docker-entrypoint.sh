@@ -42,10 +42,12 @@ esac
 stored_auth=''
 if [ -f "$IDENTITY_FILE" ]; then
   stored_auth="$(jq -r '.vlessencAuth // empty' "$IDENTITY_FILE")"
-  UUID="${UUID:-$(jq -r '.uuid // empty' "$IDENTITY_FILE") }"
-  UUID="${UUID% }"
-  XHTTP_PATH="${XHTTP_PATH:-$(jq -r '.xhttpPath // empty' "$IDENTITY_FILE") }"
-  XHTTP_PATH="${XHTTP_PATH% }"
+  if [ -z "${UUID:-}" ]; then
+    UUID="$(jq -r '.uuid // empty' "$IDENTITY_FILE")"
+  fi
+  if [ -z "${XHTTP_PATH:-}" ]; then
+    XHTTP_PATH="$(jq -r '.xhttpPath // empty' "$IDENTITY_FILE")"
+  fi
 fi
 
 UUID="${UUID:-$($XRAY_BIN uuid | head -n1)}"
@@ -73,6 +75,7 @@ OUTBOUND_PASS="${OUTBOUND_PASS:-}"
 HTTP_UDP_POLICY="${HTTP_UDP_POLICY:-block}"
 CF_DOMAIN="${CF_DOMAIN:-}"
 CF_PROTOCOL="${CF_PROTOCOL:-auto}"
+case "$CF_PROTOCOL" in auto|quic|http2) ;; *) die "CF_PROTOCOL must be auto, quic, or http2" ;; esac
 
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
   CF_TUNNEL_TOKEN_SET=1
@@ -133,8 +136,8 @@ cleanup() {
   trap - EXIT INT TERM
   [ -n "${xray_pid:-}" ] && kill "$xray_pid" 2>/dev/null || true
   [ -n "${cf_pid:-}" ] && kill "$cf_pid" 2>/dev/null || true
-  wait "${xray_pid:-0}" 2>/dev/null || true
-  wait "${cf_pid:-0}" 2>/dev/null || true
+  [ -n "${xray_pid:-}" ] && wait "$xray_pid" 2>/dev/null || true
+  [ -n "${cf_pid:-}" ] && wait "$cf_pid" 2>/dev/null || true
   exit "$rc"
 }
 trap cleanup EXIT INT TERM

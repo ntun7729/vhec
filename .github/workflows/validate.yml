@@ -23,3 +23,38 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build container
         run: docker build -t vhec:test .
+      - name: Run container smoke test
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker volume create vhec-test-state >/dev/null
+          cleanup() {
+            docker rm -f vhec-test >/dev/null 2>&1 || true
+            docker volume rm -f vhec-test-state >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run -d --name vhec-test -v vhec-test-state:/etc/vhec vhec:test >/dev/null
+          for _ in $(seq 1 20); do
+            if docker exec vhec-test test -s /etc/vhec/server.json 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          test "$(docker inspect -f '{{.State.Running}}' vhec-test)" = true
+          docker exec vhec-test test -s /etc/vhec/client-v2rayng.json
+          docker exec vhec-test xray run -test -config /etc/vhec/server.json
+          docker exec vhec-test xray run -test -config /etc/vhec/client-v2rayng.json
+          uuid_before="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
+
+          docker rm -f vhec-test >/dev/null
+          docker run -d --name vhec-test -v vhec-test-state:/etc/vhec vhec:test >/dev/null
+          for _ in $(seq 1 20); do
+            if docker exec vhec-test test -s /etc/vhec/identity.json 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          uuid_after="$(docker exec vhec-test jq -r .uuid /etc/vhec/identity.json)"
+          test "$uuid_before" = "$uuid_after"
